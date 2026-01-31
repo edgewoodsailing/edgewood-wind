@@ -1,10 +1,11 @@
 /**
  * Schedule analysis UI: port of scripts/schedule.js logic.
- * Fetches compacted stats JSON, reads form inputs, runs aggregation and scoring, renders table.
+ * Stats are in UTC; UI accepts and displays times in Cranston, RI (America/New_York).
  */
 
 const SLOTS_PER_DAY = 48;
 const HISTOGRAM_MIN_DISPLAY = 10;
+const CRANSTON_TZ = "America/New_York";
 
 // Station coordinates (PVDR1 / 8453662) for nautical twilight
 const STATION_LAT = 41.7857;
@@ -46,11 +47,11 @@ if (typeof Chart !== "undefined") {
   Chart.register(bandHighlightPlugin);
 }
 
-function getISOWeek(d) {
+function getISOWeekUTC(d) {
   const target = new Date(d.valueOf());
-  const dayNr = (d.getDay() + 6) % 7;
-  target.setDate(target.getDate() - dayNr + 3);
-  const jan4 = new Date(target.getFullYear(), 0, 4);
+  const dayNr = (d.getUTCDay() + 6) % 7;
+  target.setUTCDate(d.getUTCDate() - dayNr + 3);
+  const jan4 = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
   const dayDiff = (target - jan4) / 86400000;
   return 1 + Math.ceil(dayDiff / 7);
 }
@@ -60,13 +61,74 @@ function parseDate(str) {
   return new Date(y, m - 1, d);
 }
 
-// SunCalc uses UTC internally (date.valueOf() for the day, returns UTC Date objects).
-// We convert to local time via getHours()/getMinutes()/getSeconds() (browser timezone).
-// We pass noon local for each calendar day so the UTC day is unambiguous in all timezones.
-// Nautical slots then align with wind data when the browser timezone matches the data (e.g. Eastern for PVDR1).
-function dateToLocalHours(d) {
+function getCranstonOffsetHoursAtUTCNoon(y, m, d) {
+  const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CRANSTON_TZ,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(noonUTC);
+  const hour = parseInt(parts.find((p) => p.type === "hour").value, 10);
+  const minute = parseInt(parts.find((p) => p.type === "minute").value, 10);
+  const easternMins = hour * 60 + minute;
+  const utcMins = 12 * 60;
+  return (utcMins - easternMins) / 60;
+}
+
+/** Cranston local (dateStr YYYY-MM-DD, localHour 0-24) -> UTC half-hour slot 0-47. */
+function cranstonLocalToUTCSlot(dateStr, localHour) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const offset = getCranstonOffsetHoursAtUTCNoon(y, m, d);
+  const utcHour = localHour + offset;
+  const utcHourFloored = Math.floor(utcHour);
+  const utcMin = (utcHour - utcHourFloored) * 60;
+  let slot = utcHourFloored * 2 + (utcMin >= 30 ? 1 : 0);
+  if (slot < 0) slot += 48;
+  if (slot >= 48) slot -= 48;
+  return Math.max(0, Math.min(47, slot));
+}
+
+/** UTC slot 0-47 -> Cranston time string (reference date for DST). */
+function utcSlotToCranstonTimeString(utcSlot, referenceDateStr) {
+  const [y, m, d] = referenceDateStr.split("-").map(Number);
+  const utcHour = Math.floor(utcSlot / 2);
+  const utcMin = (utcSlot % 2) * 30;
+  const utcDate = new Date(Date.UTC(y, m - 1, d, utcHour, utcMin, 0));
+  return utcDate.toLocaleString("en-US", {
+    timeZone: CRANSTON_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/** Date range in Cranston (local calendar dates) -> set of UTC ISO week numbers. */
+function cranstonDateRangeToUTCWeeks(startDateStr, endDateStr) {
+  const [sy, sm, sd] = startDateStr.split("-").map(Number);
+  const [ey, em, ed] = endDateStr.split("-").map(Number);
+  const start = new Date(sy, sm - 1, sd);
+  const end = new Date(ey, em - 1, ed);
+  const weeks = new Set();
+  const cur = new Date(start);
+  cur.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  while (cur <= end) {
+    const y = cur.getFullYear();
+    const m = cur.getMonth() + 1;
+    const d = cur.getDate();
+    const offset = getCranstonOffsetHoursAtUTCNoon(y, m, d);
+    const midnightCranstonUTC = new Date(Date.UTC(y, m - 1, d, offset, 0, 0));
+    weeks.add(getISOWeekUTC(midnightCranstonUTC));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return [...weeks].sort((a, b) => a - b);
+}
+
+/** SunCalc returns UTC Date; express as UTC half-hour slot 0-47. */
+function dateToUTCHours(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
-  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+  return d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCMilliseconds() / 3600000;
 }
 
 function getNauticalSlotsForRange(startDateStr, endDateStr, lat, lon) {
@@ -89,8 +151,8 @@ function getNauticalSlotsForRange(startDateStr, endDateStr, lat, lon) {
     const dayAtNoon = new Date(cur);
     dayAtNoon.setHours(12, 0, 0, 0);
     const times = SunCalc.getTimes(dayAtNoon, lat, lon);
-    const dawnHours = dateToLocalHours(times.nauticalDawn);
-    const duskHours = dateToLocalHours(times.nauticalDusk);
+    const dawnHours = dateToUTCHours(times.nauticalDawn);
+    const duskHours = dateToUTCHours(times.nauticalDusk);
     if (dawnHours != null && dawnHours >= 0 && dawnHours <= 24) {
       hasValidDawn = true;
       const slotCeil = Math.min(47, Math.max(0, Math.ceil(dawnHours * 2)));
@@ -113,19 +175,6 @@ function getNauticalSlotsForRange(startDateStr, endDateStr, lat, lon) {
     toSlotNauticalBegin: hasValidDawn ? toSlotNauticalBegin : SLOTS_PER_DAY,
     toSlotNauticalEnd: hasValidDusk ? toSlotNauticalEnd : SLOTS_PER_DAY,
   };
-}
-
-function dateRangeToWeeks(startDate, endDate) {
-  const weeks = new Set();
-  const cur = new Date(startDate);
-  cur.setHours(0, 0, 0, 0);
-  const end = new Date(endDate);
-  end.setHours(23, 59, 59, 999);
-  while (cur <= end) {
-    weeks.add(getISOWeek(cur));
-    cur.setDate(cur.getDate() + 1);
-  }
-  return [...weeks].sort((a, b) => a - b);
 }
 
 function aggregateByHalfHour(stats, weeks) {
@@ -185,28 +234,13 @@ function pGoodConditions(cell, windMin, gustMax) {
   return pWind * pGust;
 }
 
-function formatHalfHour(slot) {
-  const hour = Math.floor(slot / 2);
-  const minute = (slot % 2) * 30;
-  const h = hour === 0 ? 12 : hour === 12 ? 12 : hour > 12 ? hour - 12 : hour;
-  const suffix = hour < 12 ? "AM" : "PM";
-  return `${h}:${String(minute).padStart(2, "0")} ${suffix}`;
-}
-
-function formatTimeRangeHalfHour(startSlot, slotsCount) {
-  const endSlot = startSlot + slotsCount;
-  return `${formatHalfHour(startSlot)} – ${formatHalfHour(endSlot)}`;
-}
-
 function runAnalysis(stats, args) {
-  const startDate = parseDate(args.start);
-  const endDate = parseDate(args.end);
-  const weeks = dateRangeToWeeks(startDate, endDate);
+  const weeks = cranstonDateRangeToUTCWeeks(args.start, args.end);
   const byWeekHalfHour = stats.by_week_halfhour || {};
   const availableWeeks = weeks.filter((w) => byWeekHalfHour[String(w)]);
 
   if (availableWeeks.length === 0) {
-    return { error: "No data for weeks in date range. Date range may be outside sailing season (May–Sept)." };
+    return { error: "No data for weeks in date range." };
   }
 
   const aggregate = aggregateByHalfHour(stats, availableWeeks);
@@ -248,8 +282,8 @@ function runAnalysis(stats, args) {
     },
     results: top.map((c, i) => ({
       rank: i + 1,
-      start: formatHalfHour(c.startSlot),
-      end: formatHalfHour(c.startSlot + slotsCount),
+      start: utcSlotToCranstonTimeString(c.startSlot, args.start),
+      end: utcSlotToCranstonTimeString(c.startSlot + slotsCount, args.start),
       score: (c.score * 100).toFixed(1),
       histogram: c.merged.histogram,
       gust_histogram: c.merged.gust_histogram,
@@ -329,6 +363,13 @@ function render(stats, args) {
     } else if (args.to === "nautical-end") {
       resolvedArgs.to = String(nautical.toSlotNauticalEnd);
     }
+  } else {
+    if (args.from !== "" && args.from != null && /^\d+$/.test(args.from)) {
+      resolvedArgs.from = String(cranstonLocalToUTCSlot(args.start, parseInt(args.from, 10) / 2));
+    }
+    if (args.to !== "" && args.to != null && /^\d+$/.test(args.to)) {
+      resolvedArgs.to = String(cranstonLocalToUTCSlot(args.start, parseInt(args.to, 10) / 2));
+    }
   }
 
   const out = runAnalysis(stats, resolvedArgs);
@@ -342,7 +383,7 @@ function render(stats, args) {
   }
 
   const w = out.summary.weeks;
-  summaryEl.textContent = `Date range ${out.summary.start} to ${out.summary.end} (weeks ${w[0]}-${w[w.length - 1]}); wind ≥ ${out.summary.windMin} kt, gust ≤ ${out.summary.gustMax} kt.`;
+  summaryEl.textContent = `Date range ${out.summary.start} to ${out.summary.end} (weeks ${w[0]}-${w[w.length - 1]}); wind ≥ ${out.summary.windMin} kt, gust ≤ ${out.summary.gustMax} kt. Times in Eastern (Cranston, RI).`;
   messageEl.textContent = "";
   messageEl.className = "";
 
@@ -433,7 +474,7 @@ function render(stats, args) {
   });
 
   footnoteEl.textContent =
-    "Score = estimated % of session hours with good conditions (wind ≥ min, gust ≤ max); assumes wind and gust are independent.";
+    "Score = estimated % of session hours with good conditions (wind ≥ min, gust ≤ max); assumes wind and gust are independent. Times shown in Eastern (Cranston, RI).";
 }
 
 function bindRangeDisplay(id, valueId) {

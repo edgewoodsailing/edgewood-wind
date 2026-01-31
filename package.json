@@ -7,6 +7,7 @@
     "download": "node scripts/download_wind.js",
     "download:dry": "node scripts/download_wind.js --dry-run",
     "process": "node scripts/process_wind.js",
+    "copy-stats": "node scripts/copy_stats_to_docs.js",
     "query": "node scripts/query.js",
     "schedule": "node scripts/schedule.js"
   },

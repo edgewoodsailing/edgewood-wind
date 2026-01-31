@@ -25,9 +25,8 @@ function loadConfig() {
   const config = yaml.load(readFileSync(downloadPath, "utf8"));
   const stations = yaml.load(readFileSync(stationsPath, "utf8")).stations;
   const download = config.defaults;
-  const sailingSeason = config.sailing_season || null;
 
-  return { stations, download, sailingSeason };
+  return { stations, download };
 }
 
 function parseDate(str) {
@@ -68,19 +67,12 @@ async function fetchWind(stationId, begin, end, interval, units, tz) {
   return res.json();
 }
 
-function getSeasonRange(year, sailingSeason, startDate, endDate) {
-  if (!sailingSeason) {
-    return {
-      begin: new Date(year, 0, 1),
-      end: new Date(year, 11, 31),
-    };
-  }
-  const [startM, startD] = sailingSeason.start.split("-").map(Number);
-  const [endM, endD] = sailingSeason.end.split("-").map(Number);
-  const seasonStart = new Date(year, startM - 1, startD);
-  const seasonEnd = new Date(year, endM - 1, endD);
-  const begin = seasonStart < startDate ? startDate : seasonStart;
-  const end = seasonEnd > endDate ? endDate : seasonEnd;
+/** Full year clipped to global start/end. */
+function getYearRange(year, startDate, endDate) {
+  const yearStart = new Date(year, 0, 1);
+  const yearEnd = new Date(year, 11, 31);
+  const begin = yearStart < startDate ? new Date(startDate) : yearStart;
+  const end = yearEnd > endDate ? new Date(endDate) : yearEnd;
   return begin <= end ? { begin, end } : null;
 }
 
@@ -111,7 +103,6 @@ async function downloadStation(
   cfg,
   startDate,
   endDate,
-  sailingSeason,
   delay,
   dryRun
 ) {
@@ -125,7 +116,7 @@ async function downloadStation(
   let totalRecords = 0;
 
   for (let year = startYear; year <= endYear; year++) {
-    const range = getSeasonRange(year, sailingSeason, startDate, endDate);
+    const range = getYearRange(year, startDate, endDate);
     if (!range) continue;
 
     if (is6Min) {
@@ -246,7 +237,7 @@ function parseArgs() {
 
 async function main() {
   const args = parseArgs();
-  const { stations, download: cfg, sailingSeason } = loadConfig();
+  const { stations, download: cfg } = loadConfig();
 
   const active = Object.fromEntries(
     Object.entries(stations).filter(([, v]) => v.active !== false)
@@ -276,9 +267,6 @@ async function main() {
   console.log(
     `Downloading wind data: ${startDate.toISOString().slice(0, 10)} to ${endDate.toISOString().slice(0, 10)}`
   );
-  if (sailingSeason) {
-    console.log(`Sailing season only: ${sailingSeason.start} – ${sailingSeason.end}`);
-  }
   console.log(`Stations: ${Object.keys(active).join(", ")}`);
   console.log();
 
@@ -290,7 +278,6 @@ async function main() {
       cfg,
       startDate,
       endDate,
-      sailingSeason,
       delay,
       args.dryRun
     );

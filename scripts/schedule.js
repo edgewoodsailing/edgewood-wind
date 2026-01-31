@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 /**
  * Recommend optimal timeslots for sailing sessions based on historical wind data.
- * Uses half-hour granularity (48 slots/day). Aggregates histograms over the date
- * range, then slides a time window to find slots that maximize P(wind ≥ min
- * AND gust ≤ max). Uses independence assumption for wind/gust joint probability.
+ * Uses half-hour granularity (48 slots/day). Stats are in UTC; CLI accepts and
+ * displays times in Cranston, RI (America/New_York).
  *
  * Usage: node scripts/schedule.js --start YYYY-MM-DD --end YYYY-MM-DD [--hours N] --wind-min K --gust-max K [--top N]
- *         [--from HOUR] [--to HOUR]  # constrain time windows (e.g. --to 12 for morning, --from 17 for evening)
+ *         [--from HOUR] [--to HOUR]  # Cranston local (e.g. --to 12 = noon Eastern)
  *         Hours: 0-23, or "8a"/"8am", "5p"/"5pm", "14.5"/"2:30pm" for half-hour.
  */
 
@@ -18,13 +17,81 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
 const PROCESSED_DIR = join(PROJECT_ROOT, "data", "processed");
 
-function getISOWeek(d) {
+const CRANSTON_TZ = "America/New_York";
+
+function getISOWeekUTC(d) {
   const target = new Date(d.valueOf());
-  const dayNr = (d.getDay() + 6) % 7;
-  target.setDate(target.getDate() - dayNr + 3);
-  const jan4 = new Date(target.getFullYear(), 0, 4);
+  const dayNr = (d.getUTCDay() + 6) % 7;
+  target.setUTCDate(d.getUTCDate() - dayNr + 3);
+  const jan4 = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
   const dayDiff = (target - jan4) / 86400000;
   return 1 + Math.ceil(dayDiff / 7);
+}
+
+/** Get UTC offset in hours (UTC - local) at noon UTC on the given UTC date. */
+function getCranstonOffsetHoursAtUTCNoon(y, m, d) {
+  const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CRANSTON_TZ,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(noonUTC);
+  const hour = parseInt(parts.find((p) => p.type === "hour").value, 10);
+  const minute = parseInt(parts.find((p) => p.type === "minute").value, 10);
+  const easternMins = hour * 60 + minute;
+  const utcMins = 12 * 60;
+  return (utcMins - easternMins) / 60;
+}
+
+/** Cranston local (dateStr YYYY-MM-DD, localHour 0-24) -> UTC half-hour slot 0-47. */
+function cranstonLocalToUTCSlot(dateStr, localHour) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const offset = getCranstonOffsetHoursAtUTCNoon(y, m, d);
+  const utcHour = localHour + offset;
+  const utcHourFloored = Math.floor(utcHour);
+  const utcMin = (utcHour - utcHourFloored) * 60;
+  let slot = utcHourFloored * 2 + (utcMin >= 30 ? 1 : 0);
+  if (slot < 0) slot += 48;
+  if (slot >= 48) slot -= 48;
+  return Math.max(0, Math.min(47, slot));
+}
+
+/** UTC slot 0-47 -> Cranston time string (reference date for DST). */
+function utcSlotToCranstonTimeString(utcSlot, referenceDateStr) {
+  const [y, m, d] = referenceDateStr.split("-").map(Number);
+  const utcHour = Math.floor(utcSlot / 2);
+  const utcMin = (utcSlot % 2) * 30;
+  const utcDate = new Date(Date.UTC(y, m - 1, d, utcHour, utcMin, 0));
+  const str = utcDate.toLocaleString("en-US", {
+    timeZone: CRANSTON_TZ,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return str;
+}
+
+/** Date range in Cranston (local calendar dates) -> set of UTC ISO week numbers. */
+function cranstonDateRangeToUTCWeeks(startDateStr, endDateStr) {
+  const [sy, sm, sd] = startDateStr.split("-").map(Number);
+  const [ey, em, ed] = endDateStr.split("-").map(Number);
+  const start = new Date(sy, sm - 1, sd);
+  const end = new Date(ey, em - 1, ed);
+  const weeks = new Set();
+  const cur = new Date(start);
+  cur.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  while (cur <= end) {
+    const y = cur.getFullYear();
+    const m = cur.getMonth() + 1;
+    const d = cur.getDate();
+    const offset = getCranstonOffsetHoursAtUTCNoon(y, m, d);
+    const midnightCranstonUTC = new Date(Date.UTC(y, m - 1, d, offset, 0, 0));
+    weeks.add(getISOWeekUTC(midnightCranstonUTC));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return [...weeks].sort((a, b) => a - b);
 }
 
 function parseDate(str) {
@@ -70,20 +137,6 @@ function parseHour(str) {
   return hour;
 }
 
-function dateRangeToWeeks(startDate, endDate) {
-  const weeks = new Set();
-  const cur = new Date(startDate);
-  cur.setHours(0, 0, 0, 0);
-  const end = new Date(endDate);
-  end.setHours(23, 59, 59, 999);
-
-  while (cur <= end) {
-    weeks.add(getISOWeek(cur));
-    cur.setDate(cur.getDate() + 1);
-  }
-
-  return [...weeks].sort((a, b) => a - b);
-}
 
 const SLOTS_PER_DAY = 48;
 
@@ -155,26 +208,6 @@ function pGoodConditions(cell, windMin, gustMax) {
   return pWind * pGust;
 }
 
-function formatHour(h) {
-  if (h === 0) return "12 AM";
-  if (h === 12) return "12 PM";
-  return h < 12 ? `${h} AM` : `${h - 12} PM`;
-}
-
-function formatHalfHour(slot) {
-  const hour = Math.floor(slot / 2);
-  const minute = (slot % 2) * 30;
-  const h = hour === 0 ? 12 : hour === 12 ? 12 : hour > 12 ? hour - 12 : hour;
-  const suffix = hour < 12 ? "AM" : "PM";
-  return `${h}:${String(minute).padStart(2, "0")} ${suffix}`;
-}
-
-function formatTimeRangeHalfHour(startSlot, hours) {
-  const slotsCount = hours * 2;
-  const endSlot = startSlot + slotsCount;
-  return `${formatHalfHour(startSlot)} – ${formatHalfHour(endSlot)}`;
-}
-
 function parseArgs() {
   const args = process.argv.slice(2);
   const result = {
@@ -239,12 +272,12 @@ async function main() {
     process.exit(1);
   }
 
-  const weeks = dateRangeToWeeks(startDate, endDate);
+  const weeks = cranstonDateRangeToUTCWeeks(args.start, args.end);
   const byWeekHalfHour = stats.by_week_halfhour || {};
   const availableWeeks = weeks.filter((w) => byWeekHalfHour[String(w)]);
 
   if (availableWeeks.length === 0) {
-    console.error("No data for weeks in date range. Date range may be outside sailing season (May–Sept).");
+    console.error("No data for weeks in date range.");
     process.exit(1);
   }
 
@@ -255,8 +288,8 @@ async function main() {
   const aggregate = aggregateByHalfHour(stats, availableWeeks);
   const slotsCount = args.hours * 2;
   const maxStart = SLOTS_PER_DAY - slotsCount;
-  const fromSlot = args.from != null ? Math.floor(args.from * 2) : 0;
-  const toSlot = args.to != null ? Math.ceil(args.to * 2) : SLOTS_PER_DAY;
+  const fromSlot = args.from != null ? cranstonLocalToUTCSlot(args.start, args.from) : 0;
+  const toSlot = args.to != null ? cranstonLocalToUTCSlot(args.start, args.to) : SLOTS_PER_DAY;
   const candidates = [];
 
   for (let startSlot = 0; startSlot <= maxStart; startSlot++) {
@@ -281,24 +314,24 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`\nSchedule recommendation: ${args.hours}-hour sessions`);
+  console.log(`\nSchedule recommendation: ${args.hours}-hour sessions (times in Eastern / Cranston, RI)`);
   console.log(`Date range: ${args.start} to ${args.end} (weeks ${availableWeeks[0]}-${availableWeeks[availableWeeks.length - 1]})`);
   console.log(`Criteria: wind ≥ ${args.windMin} kt, gust ≤ ${args.gustMax} kt`);
   if (args.from != null || args.to != null) {
     const constraints = [];
-    if (args.from != null) constraints.push(`start ≥ ${formatHalfHour(fromSlot)}`);
-    if (args.to != null) constraints.push(`end ≤ ${formatHalfHour(toSlot)}`);
+    if (args.from != null) constraints.push(`start ≥ ${utcSlotToCranstonTimeString(fromSlot, args.start)}`);
+    if (args.to != null) constraints.push(`end ≤ ${utcSlotToCranstonTimeString(toSlot, args.start)}`);
     console.log(`Constraints: ${constraints.join(", ")}`);
   }
-  const timeWidth = 10;
+  const timeWidth = 12;
   console.log(`\nRank  ${"Start".padStart(timeWidth)}  ${"End".padStart(timeWidth)}  Score`);
-  console.log("─".repeat(40));
+  console.log("─".repeat(45));
 
   top.forEach((c, i) => {
     const pct = (c.score * 100).toFixed(1);
     const slotsCount = args.hours * 2;
-    const startStr = formatHalfHour(c.startSlot).padStart(timeWidth);
-    const endStr = formatHalfHour(c.startSlot + slotsCount).padStart(timeWidth);
+    const startStr = utcSlotToCranstonTimeString(c.startSlot, args.start).padStart(timeWidth);
+    const endStr = utcSlotToCranstonTimeString(c.startSlot + slotsCount, args.start).padStart(timeWidth);
     console.log(`${String(i + 1).padStart(4)}  ${startStr}  ${endStr}  ${pct}%`);
   });
 

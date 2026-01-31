@@ -2,7 +2,7 @@
 /**
  * Process raw wind JSON files into histogram-based statistics by (week, half-hour slot).
  * Output: data/processed/{station_id}_stats.json
- * Half-hour slots 0-47: slot 0 = 00:00-00:30, slot 1 = 00:30-01:00, etc.
+ * All timestamps and bucketing use UTC. Half-hour slots 0-47: slot 0 = 00:00-00:30 UTC, etc.
  * Supports flexible querying of any wind range without reprocessing.
  */
 
@@ -18,11 +18,11 @@ const PROCESSED_DIR = join(PROJECT_ROOT, "data", "processed");
 const BIN_COUNT = 36; // 0-35 knots
 const GUST_BIN_COUNT = 36;
 
-function getISOWeek(d) {
+function getISOWeekUTC(d) {
   const target = new Date(d.valueOf());
-  const dayNr = (d.getDay() + 6) % 7; // Mon=0, Sun=6
-  target.setDate(target.getDate() - dayNr + 3); // Thursday
-  const jan4 = new Date(target.getFullYear(), 0, 4);
+  const dayNr = (d.getUTCDay() + 6) % 7; // Mon=0, Sun=6
+  target.setUTCDate(d.getUTCDate() - dayNr + 3); // Thursday of same ISO week
+  const jan4 = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
   const dayDiff = (target - jan4) / 86400000;
   return 1 + Math.ceil(dayDiff / 7);
 }
@@ -37,8 +37,8 @@ function percentile(sorted, p) {
 }
 
 function getHalfHourSlot(d) {
-  const hour = d.getHours();
-  const minute = d.getMinutes();
+  const hour = d.getUTCHours();
+  const minute = d.getUTCMinutes();
   return hour * 2 + (minute >= 30 ? 1 : 0);
 }
 
@@ -129,8 +129,8 @@ async function main() {
       const g = row.g ?? row.s;
       if (!t || s === undefined) continue;
 
-      const d = new Date(t.replace(" ", "T"));
-      const week = getISOWeek(d);
+      const d = new Date(t.replace(" ", "T") + "Z");
+      const week = getISOWeekUTC(d);
       const slot = getHalfHourSlot(d);
       processor.add(s, g, week, slot);
       totalRecords++;
@@ -148,7 +148,7 @@ async function main() {
   const output = {
     station: stationId,
     period,
-    sailing_season: "05-01 to 09-30",
+    time_zone: "UTC",
     bin_max_knots: BIN_COUNT,
     by_week_halfhour: processor.buildOutput(),
   };

@@ -1,11 +1,7 @@
 # Download configuration
 # CO-OPS limits: 6-min data = 1 month/request, hourly = 1 year/request
 # Using 6-min for half-hour granularity in processed stats
-
-# Sailing season: only fetch data when the sailing school is open (May 1 - Sept 30)
-sailing_season:
-  start: "05-01"   # MM-DD
-  end: "09-30"
+# Year-round data (frostbite, school schedules); no sailing_season filter.
 
 defaults:
   # PVDR1 established 2016-09-27; use 2017 for full first year
@@ -13,5 +9,5 @@ defaults:
   end_date: null  # null = today
   interval: "6"   # 6 = 6-minute (1 month/request); enables half-hour stats
   units: "english"
-  time_zone: "lst_ldt"  # Local time with DST
+  time_zone: "gmt"  # UTC; avoids DST issues, aligns with SunCalc
   delay_seconds: 1.0    # Between API requests (be nice to NOAA)
