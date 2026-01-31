@@ -77,13 +77,9 @@ function isStrictDate(str) {
   const y = Number(yStr);
   const m = Number(mStr);
   const day = Number(dStr);
-  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(day)) {
-    return false;
-  }
   if (m < 1 || m > 12) return false;
-  if (day < 1 || day > 31) return false;
   const maxDay = getDaysInMonth(y, m);
-  if (day > maxDay) return false;
+  if (day < 1 || day > maxDay) return false;
 
   const d = parseDate(str);
   if (Number.isNaN(d.getTime())) return false;
