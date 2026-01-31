@@ -60,6 +60,10 @@ function parseDate(str) {
   return new Date(y, m - 1, d);
 }
 
+// SunCalc uses UTC internally (date.valueOf() for the day, returns UTC Date objects).
+// We convert to local time via getHours()/getMinutes()/getSeconds() (browser timezone).
+// We pass noon local for each calendar day so the UTC day is unambiguous in all timezones.
+// Nautical slots then align with wind data when the browser timezone matches the data (e.g. Eastern for PVDR1).
 function dateToLocalHours(d) {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
   return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
@@ -82,7 +86,9 @@ function getNauticalSlotsForRange(startDateStr, endDateStr, lat, lon) {
   const end = new Date(endDate);
   end.setHours(23, 59, 59, 999);
   while (cur <= end) {
-    const times = SunCalc.getTimes(cur, lat, lon);
+    const dayAtNoon = new Date(cur);
+    dayAtNoon.setHours(12, 0, 0, 0);
+    const times = SunCalc.getTimes(dayAtNoon, lat, lon);
     const dawnHours = dateToLocalHours(times.nauticalDawn);
     const duskHours = dateToLocalHours(times.nauticalDusk);
     if (dawnHours != null && dawnHours >= 0 && dawnHours <= 24) {
