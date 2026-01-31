@@ -61,6 +61,37 @@ function parseDate(str) {
   return new Date(y, m - 1, d);
 }
 
+function isLeapYear(y) {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
+function getDaysInMonth(y, m) {
+  const daysPerMonth = [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return daysPerMonth[m - 1] || 0;
+}
+
+/** True only if str is YYYY-MM-DD and the date is real (no auto-adjust). */
+function isStrictDate(str) {
+  if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const [yStr, mStr, dStr] = str.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr);
+  const day = Number(dStr);
+  if (m < 1 || m > 12) return false;
+  const maxDay = getDaysInMonth(y, m);
+  if (day < 1 || day > maxDay) return false;
+
+  const d = parseDate(str);
+  if (Number.isNaN(d.getTime())) return false;
+  const realY = d.getFullYear();
+  const realM = d.getMonth() + 1;
+  const realDay = d.getDate();
+  return (
+    str ===
+    `${realY}-${String(realM).padStart(2, "0")}-${String(realDay).padStart(2, "0")}`
+  );
+}
+
 function getCranstonOffsetHoursAtUTCNoon(y, m, d) {
   const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -325,6 +356,80 @@ function validateInputs(args) {
   return null;
 }
 
+const HOURS_OPTIONS = ["0.5", "1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"];
+// FROM_TO_OPTIONS represents valid time slot values:
+// - "" (no constraint), "nautical-begin", "nautical-end"
+// - Half-hour slots from 6:00 AM (slot 12) to 10:00 PM (slot 44)
+const FROM_TO_OPTIONS = new Set([
+  "",
+  "nautical-begin",
+  "nautical-end",
+  ...Array.from({ length: 33 }, (_, i) => String(i + 12)),
+]);
+
+function applyParamsFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+
+  const start = params.get("start");
+  const end = params.get("end");
+  const startValid = isStrictDate(start);
+  const endValid = isStrictDate(end);
+  if (startValid) set("start", start);
+  if (startValid && endValid && parseDate(start) <= parseDate(end))
+    set("end", end);
+
+  const hours = params.get("hours");
+  if (hours && HOURS_OPTIONS.includes(hours)) set("hours", hours);
+
+  const top = params.get("top");
+  if (top !== null && top !== "") {
+    const n = parseInt(top, 10);
+    if (!Number.isNaN(n) && n >= 1 && n <= 48) set("top", String(n));
+  }
+
+  const windMin = params.get("windMin");
+  if (windMin !== null && windMin !== "") {
+    const n = parseInt(windMin, 10);
+    if (!Number.isNaN(n) && n >= 0 && n <= 35) set("windMin", String(n));
+  }
+  const gustMax = params.get("gustMax");
+  if (gustMax !== null && gustMax !== "") {
+    const n = parseInt(gustMax, 10);
+    if (!Number.isNaN(n) && n >= 0 && n <= 35) set("gustMax", String(n));
+  }
+
+  const from = params.get("from");
+  if (from !== null && FROM_TO_OPTIONS.has(from)) set("from", from);
+  const to = params.get("to");
+  if (to !== null && FROM_TO_OPTIONS.has(to)) set("to", to);
+
+  const windMinInput = document.getElementById("windMin");
+  const windMinEl = document.getElementById("windMinValue");
+  if (windMinEl && windMinInput) windMinEl.textContent = windMinInput.value;
+  const gustMaxInput = document.getElementById("gustMax");
+  const gustMaxEl = document.getElementById("gustMaxValue");
+  if (gustMaxEl && gustMaxInput) gustMaxEl.textContent = gustMaxInput.value;
+}
+
+function updateURLFromInputs() {
+  const args = getInputs();
+  const params = new URLSearchParams();
+  params.set("start", args.start);
+  params.set("end", args.end);
+  params.set("hours", String(args.hours));
+  params.set("top", String(args.top));
+  params.set("windMin", String(args.windMin));
+  params.set("gustMax", String(args.gustMax));
+  params.set("from", args.from);
+  params.set("to", args.to);
+  const url = window.location.pathname + "?" + params.toString();
+  history.replaceState(null, "", url);
+}
+
 function render(stats, args) {
   const summaryEl = document.getElementById("summary");
   const messageEl = document.getElementById("message");
@@ -501,6 +606,7 @@ function main() {
   const year = new Date().getFullYear();
   document.getElementById("start").value = `${year}-06-15`;
   document.getElementById("end").value = `${year}-07-05`;
+  applyParamsFromURL();
 
   const messageEl = document.getElementById("message");
   messageEl.textContent = "Loading…";
@@ -518,6 +624,7 @@ function main() {
 
       function update() {
         render(stats, getInputs());
+        updateURLFromInputs();
       }
 
       ["start", "end", "hours", "windMin", "gustMax", "top", "from", "to"].forEach(
