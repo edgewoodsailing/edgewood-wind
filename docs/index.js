@@ -61,17 +61,38 @@ function parseDate(str) {
   return new Date(y, m - 1, d);
 }
 
+function isLeapYear(y) {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
+function getDaysInMonth(y, m) {
+  const daysPerMonth = [31, isLeapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return daysPerMonth[m - 1] || 0;
+}
+
 /** True only if str is YYYY-MM-DD and the date is real (no auto-adjust). */
 function isStrictDate(str) {
   if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const [yStr, mStr, dStr] = str.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr);
+  const day = Number(dStr);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(day)) {
+    return false;
+  }
+  if (m < 1 || m > 12) return false;
+  if (day < 1 || day > 31) return false;
+  const maxDay = getDaysInMonth(y, m);
+  if (day > maxDay) return false;
+
   const d = parseDate(str);
   if (Number.isNaN(d.getTime())) return false;
-  const y = d.getFullYear();
-  const m = d.getMonth() + 1;
-  const day = d.getDate();
+  const realY = d.getFullYear();
+  const realM = d.getMonth() + 1;
+  const realDay = d.getDate();
   return (
     str ===
-    `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    `${realY}-${String(realM).padStart(2, "0")}-${String(realDay).padStart(2, "0")}`
   );
 }
 
@@ -340,6 +361,9 @@ function validateInputs(args) {
 }
 
 const HOURS_OPTIONS = ["0.5", "1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"];
+// FROM_TO_OPTIONS represents valid time slot values:
+// - "" (no constraint), "nautical-begin", "nautical-end"
+// - Half-hour slots from 6:00 AM (slot 12) to 10:00 PM (slot 44)
 const FROM_TO_OPTIONS = new Set([
   "",
   "nautical-begin",
@@ -359,7 +383,7 @@ function applyParamsFromURL() {
   const startValid = isStrictDate(start);
   const endValid = isStrictDate(end);
   if (startValid) set("start", start);
-  if (endValid && (!startValid || parseDate(start) <= parseDate(end)))
+  if (startValid && endValid && parseDate(start) <= parseDate(end))
     set("end", end);
 
   const hours = params.get("hours");
@@ -387,10 +411,12 @@ function applyParamsFromURL() {
   const to = params.get("to");
   if (to !== null && FROM_TO_OPTIONS.has(to)) set("to", to);
 
+  const windMinInput = document.getElementById("windMin");
   const windMinEl = document.getElementById("windMinValue");
-  if (windMinEl) windMinEl.textContent = document.getElementById("windMin").value;
+  if (windMinEl && windMinInput) windMinEl.textContent = windMinInput.value;
+  const gustMaxInput = document.getElementById("gustMax");
   const gustMaxEl = document.getElementById("gustMaxValue");
-  if (gustMaxEl) gustMaxEl.textContent = document.getElementById("gustMax").value;
+  if (gustMaxEl && gustMaxInput) gustMaxEl.textContent = gustMaxInput.value;
 }
 
 function updateURLFromInputs() {
