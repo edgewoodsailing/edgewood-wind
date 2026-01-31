@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Python (if accidentally created)
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

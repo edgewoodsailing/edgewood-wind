@@ -1,0 +1,16 @@
+{
+  "name": "edgewood-wind",
+  "description": "Analyze wind patterns near Edgewood Yacht Club for sailing class scheduling",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "download": "node scripts/download_wind.js",
+    "download:dry": "node scripts/download_wind.js --dry-run",
+    "process": "node scripts/process_wind.js",
+    "query": "node scripts/query.js",
+    "schedule": "node scripts/schedule.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

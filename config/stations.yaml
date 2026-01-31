@@ -1,0 +1,34 @@
+# Edgewood Wind Analysis - Station Configuration
+# Add stations here to download and compare data from multiple sources.
+# See NOAA Tides & Currents: https://tidesandcurrents.noaa.gov/
+# CO-OPS API: https://api.tidesandcurrents.noaa.gov/api/prod/
+
+stations:
+  PVDR1:
+    id: "8453662"
+    name: "Providence Visibility"
+    location: "Providence River, RI"
+    established: "2016-09-27"
+    lat: 41.7857
+    lon: -71.3831
+    # Distance from Edgewood Yacht Club: ~0.6 mi — primary station
+    active: true
+
+  # Uncomment to add more stations:
+  # FOXR1:
+  #   id: "8454000"
+  #   name: "Providence"
+  #   location: "Providence River, RI"
+  #   established: "1938"
+  #   lat: 41.8072
+  #   lon: -71.4007
+  #   active: false
+  #
+  # CPTR1:
+  #   id: "8452944"
+  #   name: "Conimicut Light"
+  #   location: "Narragansett Bay, RI"
+  #   established: "1999"
+  #   lat: 41.7167
+  #   lon: -71.3433
+  #   active: false
