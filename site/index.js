@@ -4,6 +4,43 @@
  */
 
 const SLOTS_PER_DAY = 48;
+const HISTOGRAM_MIN_DISPLAY = 10;
+
+const bandHighlightPlugin = {
+  id: "bandHighlight",
+  beforeDatasetsDraw(chart) {
+    const opts = chart.options.plugins?.bandHighlight;
+    if (!opts || opts.windMin == null || opts.gustMax == null) return;
+    const { windMin, gustMax } = opts;
+    const ctx = chart.ctx;
+    const xScale = chart.scales.x;
+    if (!xScale) return;
+    const left = xScale.left;
+    const right = xScale.right;
+    const top = chart.chartArea?.top ?? 0;
+    const bottom = chart.chartArea?.bottom ?? chart.height;
+    const xAt = (v) => xScale.getPixelForValue(v);
+    const gray = "rgba(0, 0, 0, 0.12)";
+    ctx.save();
+    ctx.fillStyle = gray;
+    ctx.fillRect(left, top, xAt(windMin) - left, bottom - top);
+    ctx.fillStyle = "white";
+    const bandLeft = xAt(windMin);
+    const bandRight = xAt(gustMax);
+    if (bandRight > bandLeft) {
+      ctx.fillRect(bandLeft, top, bandRight - bandLeft, bottom - top);
+    }
+    ctx.fillStyle = gray;
+    ctx.fillRect(xAt(gustMax), top, right - xAt(gustMax), bottom - top);
+    ctx.restore();
+  },
+};
+
+let chartInstances = [];
+
+if (typeof Chart !== "undefined") {
+  Chart.register(bandHighlightPlugin);
+}
 
 function getISOWeek(d) {
   const target = new Date(d.valueOf());
@@ -131,7 +168,7 @@ function runAnalysis(stats, args) {
     }
     const merged = mergeCells(cells);
     const score = pGoodConditions(merged, args.windMin, args.gustMax);
-    candidates.push({ startSlot, score });
+    candidates.push({ startSlot, score, merged });
   }
 
   if (candidates.length === 0) {
@@ -155,6 +192,8 @@ function runAnalysis(stats, args) {
       start: formatHalfHour(c.startSlot),
       end: formatHalfHour(c.startSlot + slotsCount),
       score: (c.score * 100).toFixed(1),
+      histogram: c.merged.histogram,
+      gust_histogram: c.merged.gust_histogram,
     })),
     slotsCount,
   };
@@ -214,12 +253,91 @@ function render(stats, args) {
   messageEl.textContent = "";
   messageEl.className = "";
 
+  chartInstances.forEach((chart) => chart.destroy());
+  chartInstances = [];
+
+  let xMax = 0;
+  for (const r of out.results) {
+    for (let i = 0; i < 36; i++) {
+      if ((r.histogram[i] || 0) > 0 || (r.gust_histogram[i] || 0) > 0) {
+        xMax = Math.max(xMax, i);
+      }
+    }
+  }
+  xMax = Math.max(xMax, HISTOGRAM_MIN_DISPLAY);
+
+  const labels = Array.from({ length: xMax + 1 }, (_, i) => i);
+
   tbody.innerHTML = out.results
     .map(
       (r) =>
-        `<tr><td>${r.rank}</td><td>${r.start}</td><td>${r.end}</td><td>${r.score}%</td></tr>`
+        `<tr><td>${r.rank}</td><td>${r.start}</td><td>${r.end}</td><td class="histogram-cell"></td><td>${r.score}%</td></tr>`
     )
     .join("");
+
+  const rows = tbody.querySelectorAll("tr");
+  rows.forEach((tr, idx) => {
+    const r = out.results[idx];
+    const cell = tr.querySelector(".histogram-cell");
+    const canvas = document.createElement("canvas");
+    canvas.width = 150;
+    canvas.height = 50;
+    cell.appendChild(canvas);
+
+    const rawWind = r.histogram.slice(0, xMax + 1);
+    const rawGust = r.gust_histogram.slice(0, xMax + 1);
+    let lastWind = -1;
+    let lastGust = -1;
+    for (let i = 0; i < rawWind.length; i++) {
+      if (rawWind[i] > 0) lastWind = i;
+      if (rawGust[i] > 0) lastGust = i;
+    }
+    const windData = rawWind.map((v, i) => (i > lastWind ? null : v));
+    const gustData = rawGust.map((v, i) => (i > lastGust ? null : v));
+
+    const chart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Gust",
+            data: gustData,
+            borderColor: "rgb(255, 159, 64)",
+            backgroundColor: "transparent",
+            fill: false,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+          },
+          {
+            label: "Wind",
+            data: windData,
+            borderColor: "rgb(54, 162, 235)",
+            backgroundColor: "transparent",
+            fill: false,
+            pointRadius: 0,
+            pointHoverRadius: 0,
+          },
+        ],
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          bandHighlight: {
+            windMin: args.windMin,
+            gustMax: args.gustMax,
+          },
+        },
+        scales: {
+          x: { display: false },
+          y: { display: false },
+        },
+      },
+    });
+    chartInstances.push(chart);
+  });
 
   footnoteEl.textContent =
     "Score = estimated % of session hours with good conditions (wind ≥ min, gust ≤ max); assumes wind and gust are independent.";
