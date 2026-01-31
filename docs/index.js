@@ -354,6 +354,10 @@ function bindRangeDisplay(id, valueId) {
 }
 
 function main() {
+  const year = new Date().getFullYear();
+  document.getElementById("start").value = `${year}-06-15`;
+  document.getElementById("end").value = `${year}-07-05`;
+
   const messageEl = document.getElementById("message");
   messageEl.textContent = "Loading…";
 
