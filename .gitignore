@@ -10,3 +10,4 @@ venv/
 .vscode/
 *.swp
 *.swo
+.cursor/debug.log
