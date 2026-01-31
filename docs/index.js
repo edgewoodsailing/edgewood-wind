@@ -6,6 +6,10 @@
 const SLOTS_PER_DAY = 48;
 const HISTOGRAM_MIN_DISPLAY = 10;
 
+// Station coordinates (PVDR1 / 8453662) for nautical twilight
+const STATION_LAT = 41.7857;
+const STATION_LON = -71.3831;
+
 const bandHighlightPlugin = {
   id: "bandHighlight",
   beforeDatasetsDraw(chart) {
@@ -54,6 +58,55 @@ function getISOWeek(d) {
 function parseDate(str) {
   const [y, m, d] = str.split("-").map(Number);
   return new Date(y, m - 1, d);
+}
+
+function dateToLocalHours(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
+  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+}
+
+function getNauticalSlotsForRange(startDateStr, endDateStr, lat, lon) {
+  if (typeof SunCalc === "undefined") {
+    return null;
+  }
+  const startDate = parseDate(startDateStr);
+  const endDate = parseDate(endDateStr);
+  let fromSlotNauticalBegin = 0;
+  let fromSlotNauticalEnd = 0;
+  let toSlotNauticalBegin = SLOTS_PER_DAY;
+  let toSlotNauticalEnd = SLOTS_PER_DAY;
+  let hasValidDawn = false;
+  let hasValidDusk = false;
+  const cur = new Date(startDate);
+  cur.setHours(0, 0, 0, 0);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+  while (cur <= end) {
+    const times = SunCalc.getTimes(cur, lat, lon);
+    const dawnHours = dateToLocalHours(times.nauticalDawn);
+    const duskHours = dateToLocalHours(times.nauticalDusk);
+    if (dawnHours != null && dawnHours >= 0 && dawnHours <= 24) {
+      hasValidDawn = true;
+      const slotCeil = Math.min(47, Math.max(0, Math.ceil(dawnHours * 2)));
+      const slotFloor = Math.min(48, Math.max(0, Math.floor(dawnHours * 2)));
+      fromSlotNauticalBegin = Math.max(fromSlotNauticalBegin, slotCeil);
+      toSlotNauticalBegin = Math.min(toSlotNauticalBegin, slotFloor);
+    }
+    if (duskHours != null && duskHours >= 0 && duskHours <= 24) {
+      hasValidDusk = true;
+      const slotCeil = Math.min(47, Math.max(0, Math.ceil(duskHours * 2)));
+      const slotFloor = Math.min(48, Math.max(0, Math.floor(duskHours * 2)));
+      fromSlotNauticalEnd = Math.max(fromSlotNauticalEnd, slotCeil);
+      toSlotNauticalEnd = Math.min(toSlotNauticalEnd, slotFloor);
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return {
+    fromSlotNauticalBegin: hasValidDawn ? fromSlotNauticalBegin : 0,
+    fromSlotNauticalEnd: hasValidDusk ? fromSlotNauticalEnd : 0,
+    toSlotNauticalBegin: hasValidDawn ? toSlotNauticalBegin : SLOTS_PER_DAY,
+    toSlotNauticalEnd: hasValidDusk ? toSlotNauticalEnd : SLOTS_PER_DAY,
+  };
 }
 
 function dateRangeToWeeks(startDate, endDate) {
@@ -238,7 +291,41 @@ function render(stats, args) {
     return;
   }
 
-  const out = runAnalysis(stats, args);
+  let resolvedArgs = { ...args };
+  const needsNautical =
+    args.from === "nautical-begin" ||
+    args.from === "nautical-end" ||
+    args.to === "nautical-begin" ||
+    args.to === "nautical-end";
+  if (needsNautical) {
+    const nautical = getNauticalSlotsForRange(
+      args.start,
+      args.end,
+      STATION_LAT,
+      STATION_LON
+    );
+    if (nautical == null) {
+      summaryEl.textContent = "";
+      messageEl.textContent =
+        "SunCalc not loaded. Nautical twilight options require the SunCalc script.";
+      messageEl.className = "error";
+      tbody.innerHTML = "";
+      footnoteEl.textContent = "";
+      return;
+    }
+    if (args.from === "nautical-begin") {
+      resolvedArgs.from = String(nautical.fromSlotNauticalBegin);
+    } else if (args.from === "nautical-end") {
+      resolvedArgs.from = String(nautical.fromSlotNauticalEnd);
+    }
+    if (args.to === "nautical-begin") {
+      resolvedArgs.to = String(nautical.toSlotNauticalBegin);
+    } else if (args.to === "nautical-end") {
+      resolvedArgs.to = String(nautical.toSlotNauticalEnd);
+    }
+  }
+
+  const out = runAnalysis(stats, resolvedArgs);
   if (out.error) {
     summaryEl.textContent = "";
     messageEl.textContent = out.error;

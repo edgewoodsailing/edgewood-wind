@@ -75,6 +75,8 @@
         <label for="from">Earliest start</label>
         <select id="from">
           <option value="">Any</option>
+          <option value="nautical-begin" selected>Nautical twilight begins</option>
+          <option value="nautical-end">Nautical twilight ends</option>
           <option value="12">6:00 AM</option>
           <option value="13">6:30 AM</option>
           <option value="14">7:00 AM</option>
@@ -114,6 +116,8 @@
         <label for="to">Latest end</label>
         <select id="to">
           <option value="">Any</option>
+          <option value="nautical-begin">Nautical twilight begins</option>
+          <option value="nautical-end" selected>Nautical twilight ends</option>
           <option value="12">6:00 AM</option>
           <option value="13">6:30 AM</option>
           <option value="14">7:00 AM</option>
@@ -168,6 +172,7 @@
   </table>
   <p id="footnote" style="font-size: 0.875rem; color: #666; margin-top: 0.5rem;"></p>
 
+  <script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="index.js" type="module"></script>
 </body>
