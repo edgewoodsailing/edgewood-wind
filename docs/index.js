@@ -61,6 +61,20 @@ function parseDate(str) {
   return new Date(y, m - 1, d);
 }
 
+/** True only if str is YYYY-MM-DD and the date is real (no auto-adjust). */
+function isStrictDate(str) {
+  if (!str || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const d = parseDate(str);
+  if (Number.isNaN(d.getTime())) return false;
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return (
+    str ===
+    `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+  );
+}
+
 function getCranstonOffsetHoursAtUTCNoon(y, m, d) {
   const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -325,6 +339,75 @@ function validateInputs(args) {
   return null;
 }
 
+const HOURS_OPTIONS = ["0.5", "1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"];
+const FROM_TO_OPTIONS = new Set([
+  "",
+  "nautical-begin",
+  "nautical-end",
+  ...Array.from({ length: 33 }, (_, i) => String(i + 12)),
+]);
+
+function applyParamsFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+
+  const start = params.get("start");
+  const end = params.get("end");
+  const startValid = isStrictDate(start);
+  const endValid = isStrictDate(end);
+  if (startValid) set("start", start);
+  if (endValid && (!startValid || parseDate(start) <= parseDate(end)))
+    set("end", end);
+
+  const hours = params.get("hours");
+  if (hours && HOURS_OPTIONS.includes(hours)) set("hours", hours);
+
+  const top = params.get("top");
+  if (top !== null && top !== "") {
+    const n = parseInt(top, 10);
+    if (!Number.isNaN(n) && n >= 1 && n <= 48) set("top", String(n));
+  }
+
+  const windMin = params.get("windMin");
+  if (windMin !== null && windMin !== "") {
+    const n = parseInt(windMin, 10);
+    if (!Number.isNaN(n) && n >= 0 && n <= 35) set("windMin", String(n));
+  }
+  const gustMax = params.get("gustMax");
+  if (gustMax !== null && gustMax !== "") {
+    const n = parseInt(gustMax, 10);
+    if (!Number.isNaN(n) && n >= 0 && n <= 35) set("gustMax", String(n));
+  }
+
+  const from = params.get("from");
+  if (from !== null && FROM_TO_OPTIONS.has(from)) set("from", from);
+  const to = params.get("to");
+  if (to !== null && FROM_TO_OPTIONS.has(to)) set("to", to);
+
+  const windMinEl = document.getElementById("windMinValue");
+  if (windMinEl) windMinEl.textContent = document.getElementById("windMin").value;
+  const gustMaxEl = document.getElementById("gustMaxValue");
+  if (gustMaxEl) gustMaxEl.textContent = document.getElementById("gustMax").value;
+}
+
+function updateURLFromInputs() {
+  const args = getInputs();
+  const params = new URLSearchParams();
+  params.set("start", args.start);
+  params.set("end", args.end);
+  params.set("hours", String(args.hours));
+  params.set("top", String(args.top));
+  params.set("windMin", String(args.windMin));
+  params.set("gustMax", String(args.gustMax));
+  params.set("from", args.from);
+  params.set("to", args.to);
+  const url = window.location.pathname + "?" + params.toString();
+  history.replaceState(null, "", url);
+}
+
 function render(stats, args) {
   const summaryEl = document.getElementById("summary");
   const messageEl = document.getElementById("message");
@@ -501,6 +584,7 @@ function main() {
   const year = new Date().getFullYear();
   document.getElementById("start").value = `${year}-06-15`;
   document.getElementById("end").value = `${year}-07-05`;
+  applyParamsFromURL();
 
   const messageEl = document.getElementById("message");
   messageEl.textContent = "Loading…";
@@ -518,6 +602,7 @@ function main() {
 
       function update() {
         render(stats, getInputs());
+        updateURLFromInputs();
       }
 
       ["start", "end", "hours", "windMin", "gustMax", "top", "from", "to"].forEach(
