@@ -249,11 +249,21 @@ function runAnalysis(stats, args) {
   const fromSlot = args.from !== "" && args.from !== null ? parseInt(args.from, 10) : 0;
   const toSlot = args.to !== "" && args.to !== null ? parseInt(args.to, 10) : SLOTS_PER_DAY;
   const candidates = [];
+  const wrapping = fromSlot > toSlot;
 
   for (let startSlot = 0; startSlot <= maxStart; startSlot++) {
-    if (args.from !== "" && args.from !== null && startSlot < fromSlot) continue;
     const endSlot = startSlot + slotsCount;
-    if (args.to !== "" && args.to !== null && endSlot > toSlot) continue;
+    if (args.from !== "" && args.from !== null || args.to !== "" && args.to !== null) {
+      if (wrapping) {
+        const lastSlot = (startSlot + slotsCount - 1) % SLOTS_PER_DAY;
+        const startInRange = startSlot >= fromSlot || startSlot <= toSlot;
+        const endInRange = lastSlot >= fromSlot || lastSlot <= toSlot;
+        if (!startInRange || !endInRange) continue;
+      } else {
+        if (args.from !== "" && args.from !== null && startSlot < fromSlot) continue;
+        if (args.to !== "" && args.to !== null && endSlot > toSlot) continue;
+      }
+    }
 
     const cells = [];
     for (let i = 0; i < slotsCount; i++) {
