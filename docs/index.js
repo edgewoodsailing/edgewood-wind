@@ -506,11 +506,13 @@ function render(stats, args) {
   chartInstances = [];
 
   let xMax = 0;
+  let yMax = 0;
   for (const r of out.results) {
     for (let i = 0; i < 36; i++) {
       if ((r.histogram[i] || 0) > 0 || (r.gust_histogram[i] || 0) > 0) {
         xMax = Math.max(xMax, i);
       }
+      yMax = Math.max(yMax, r.histogram[i] || 0, r.gust_histogram[i] || 0);
     }
   }
   xMax = Math.max(xMax, HISTOGRAM_MIN_DISPLAY);
@@ -581,7 +583,7 @@ function render(stats, args) {
         },
         scales: {
           x: { display: false },
-          y: { display: false },
+          y: { display: false, min: 0, max: yMax },
         },
       },
     });
